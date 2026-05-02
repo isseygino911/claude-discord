@@ -1,13 +1,13 @@
 # Discord + Claude on a VPS
 
-A guide to running a Discord bot powered by Claude AI on a Ubuntu VPS.
+A Discord bot that routes messages to Claude Code CLI on a Ubuntu VPS.
 
 ## Prerequisites
 
 - Ubuntu VPS with SSH access
-- Python 3.10+
+- Node.js 18+
+- Claude Code CLI installed and authenticated (`claude`)
 - A Discord account with a bot application
-- An Anthropic API key
 
 ## Step 1: Create a Discord Bot
 
@@ -19,101 +19,65 @@ A guide to running a Discord bot powered by Claude AI on a Ubuntu VPS.
 6. Go to **OAuth2 → URL Generator**, select `bot` scope and `Send Messages` + `Read Message History` permissions
 7. Open the generated URL and invite the bot to your server
 
-## Step 2: Get an Anthropic API Key
+## Step 2: Set Up the VPS
 
-1. Sign up at [console.anthropic.com](https://console.anthropic.com)
-2. Go to **API Keys** and create a new key
-3. Copy and save it securely
-
-## Step 3: Set Up the VPS
-
-SSH into your VPS and run:
+SSH into your VPS and install Node.js if needed:
 
 ```bash
-sudo apt update && sudo apt install -y python3 python3-pip python3-venv
-mkdir discord-claude-bot && cd discord-claude-bot
-python3 -m venv venv
-source venv/bin/activate
-pip install discord.py anthropic
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
 ```
 
-## Step 4: Create the Bot Script
-
-Create `bot.py`:
-
-```python
-import discord
-import anthropic
-import os
-
-DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-
-intents = discord.Intents.default()
-intents.message_content = True
-client = discord.Client(intents=intents)
-claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-@client.event
-async def on_ready():
-    print(f"Logged in as {client.user}")
-
-@client.event
-async def on_message(message):
-    if message.author == client.user:
-        return
-    if client.user.mentioned_in(message):
-        prompt = message.content.replace(f"<@{client.user.id}>", "").strip()
-        response = claude.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        await message.channel.send(response.content[0].text)
-
-client.run(DISCORD_TOKEN)
-```
-
-## Step 5: Set Environment Variables
+Clone the repo and install dependencies:
 
 ```bash
-export DISCORD_TOKEN="your-discord-bot-token"
-export ANTHROPIC_API_KEY="your-anthropic-api-key"
+git clone https://github.com/isseygino911/claude-discord.git
+cd claude-discord
+npm install
 ```
 
-## Step 6: Run the Bot
+## Step 3: Configure Environment Variables
 
-```bash
-python3 bot.py
+Create a `.env` file in the project directory:
+
+```
+DISCORD_TOKEN=your-discord-bot-token
+ALLOWED_USER_ID=your-discord-user-id
+CLAUDE_CODE_OAUTH_TOKEN=your-claude-oauth-token
 ```
 
-To keep it running after you disconnect:
+- `DISCORD_TOKEN` — from the Discord Developer Portal (Step 1)
+- `ALLOWED_USER_ID` — your Discord user ID (only you can send messages to the bot)
+- `CLAUDE_CODE_OAUTH_TOKEN` — your Claude Code OAuth token
+
+## Step 4: Run the Bot
 
 ```bash
-nohup python3 bot.py &> bot.log &
+node bot.js
 ```
 
-Or use `screen`:
+## Step 5: Keep It Running (PM2)
 
 ```bash
-screen -S discord-bot
-python3 bot.py
-# Press Ctrl+A then D to detach
+npm install -g pm2
+pm2 start ecosystem.config.js
+pm2 save
+pm2 startup   # follow the printed command to auto-start on reboot
 ```
 
 ## Usage
 
-Mention the bot in any channel it has access to:
+Send any message in the channel — the bot passes it to Claude Code CLI and replies.
 
-```
-@YourBot What is the capital of France?
-```
+Built-in commands:
+- `!new` — start a fresh conversation (clears history)
+- `!status` — show how many exchanges are in the current session
 
 ## Troubleshooting
 
 | Issue | Fix |
 |---|---|
-| Bot offline | Check token is correct and bot is invited |
-| No response to mentions | Enable Message Content Intent in Dev Portal |
-| API errors | Verify `ANTHROPIC_API_KEY` is set and valid |
-| Bot stops after SSH disconnect | Use `nohup` or `screen` as shown above |
+| Bot offline | Check `DISCORD_TOKEN` is correct and bot is invited |
+| No response | Enable Message Content Intent in Dev Portal |
+| Claude not found | Ensure `claude` CLI is installed at `/usr/bin/claude` and authenticated |
+| Bot stops after SSH disconnect | Use PM2 as shown above |
