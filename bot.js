@@ -78,7 +78,7 @@ const buildPrompt = (userMessage) => {
     prompt += 'Recent messages:\n';
     history.forEach(m => prompt += `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.raw}\n`);
   }
-  prompt += `Human: ${userMessage}\nAssistant:`;
+  prompt += `Human: ${userMessage}`;
   if (prompt.length > MAX_PROMPT_CHARS) {
     history = history.slice(-4);
     return buildPrompt(userMessage);
@@ -87,7 +87,7 @@ const buildPrompt = (userMessage) => {
 };
 
 const askClaude = (userMessage, channel) => {
-  execFile('/usr/bin/claude', ['-p', buildPrompt(userMessage), '--allowedTools', 'Edit,Write,Read,Bash'], {
+ execFile('/usr/bin/claude', ['-p', buildPrompt(userMessage), '--allowedTools', 'Bash,Edit,Write,Read'], {
     cwd: WORKDIR,
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -114,7 +114,6 @@ client.on('messageCreate', async (message) => {
   if (content === '!status') { message.channel.send(`🟢 ${Math.floor(history.length / 2)} exchanges | Summary: ${summary ? 'yes' : 'no'}`); return; }
   if (content.startsWith('!')) return;
 
-  // handle file attachments
   let userMessage = content;
   if (message.attachments.size > 0) {
     const parts = content ? [content] : [];
