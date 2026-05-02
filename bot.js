@@ -26,37 +26,73 @@ const client = new Client({
 
 const WORKDIR = '/home/claude-project';
 const MAX_EXCHANGES = 10;
+const MAX_PROMPT_CHARS = 50000; // Bug 5: stay well under OS ARG_MAX
 const SYSTEM_PROMPT = `You are Claude, a coding assistant on a Ubuntu VPS. Be concise. When editing files, show only what changed.`;
 
-let history = [];
+let history = []; // stores { role, raw } — raw is unstripped
 let summary = '';
 
 const isAllowed = (userId) => userId === ALLOWED_USER_ID;
 
-const buildPrompt = (userMessage) => {
-  let prompt = SYSTEM_PROMPT + '\n\n';
-  if (summary) prompt += `Previous summary:\n${summary}\n\n`;
-  if (history.length) {
-    prompt += 'Recent messages:\n';
-    history.forEach(m => prompt += `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}\n`);
-  }
-  prompt += `Human: ${userMessage}\nAssistant:`;
-  return prompt;
-};
+// Bug 2 fix: strip backticks only for Discord display, never for history
+const toDiscord = (text) => text.replace(/`{3}/g, '').trim(); // only strip triple backticks
 
 const sendChunked = async (channel, text) => {
-  const clean = text.trim().replace(/```/g, '');
+  const clean = toDiscord(text);
+  if (!clean) return;
   const max = 1900;
   for (let i = 0; i < clean.length; i += max) {
     await channel.send('```\n' + clean.slice(i, i + max) + '\n```');
   }
 };
 
+// Bug 1 fix: always pass channel to summarizeHistory
+const summarizeHistory = (channel) => {
+  const historyText = history.map(m =>
+    `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.raw}`
+  ).join('\n');
+
+  const prompt = `Summarize this conversation in 2-3 sentences, keeping key technical decisions:\n\n${historyText}`;
+
+  execFile('/usr/bin/claude', ['-p', prompt], {
+    cwd: WORKDIR,
+    env: { ...process.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 1024 * 1024 * 10,
+  }, (err, stdout) => {
+    if (!err && stdout.trim()) {
+      summary = summary ? `${summary} ${stdout.trim()}` : stdout.trim();
+    }
+    history = [];
+    if (channel) channel.send('📝 History summarized, context preserved.');
+  });
+};
+
+const buildPrompt = (userMessage) => {
+  let prompt = SYSTEM_PROMPT + '\n\n';
+  if (summary) prompt += `Previous summary:\n${summary}\n\n`;
+  if (history.length) {
+    prompt += 'Recent messages:\n';
+    history.forEach(m => prompt += `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.raw}\n`);
+  }
+  prompt += `Human: ${userMessage}\nAssistant:`;
+
+  // Bug 5: truncate if prompt exceeds safe OS arg limit
+  if (prompt.length > MAX_PROMPT_CHARS) {
+    const overflow = prompt.length - MAX_PROMPT_CHARS;
+    summary = `[Truncated ${overflow} chars] ${summary}`;
+    history = history.slice(-4); // keep last 2 exchanges only
+    return buildPrompt(userMessage); // rebuild with trimmed history
+  }
+
+  return prompt;
+};
+
+// Bug 3 fix: only push to history after confirmed success, before summarize check
 const askClaude = (userMessage, channel) => {
   const prompt = buildPrompt(userMessage);
-  console.log('OAUTH TOKEN:', process.env.CLAUDE_CODE_OAUTH_TOKEN ? 'SET' : 'MISSING');
 
-  execFile('/usr/bin/claude', ['-p', prompt, '--allowedTools', 'Edit,Write,Read,Bash'], {
+  execFile('/usr/bin/claude', ['-p', prompt], {
     cwd: WORKDIR,
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -65,17 +101,19 @@ const askClaude = (userMessage, channel) => {
     if (err) {
       console.error('Claude error:', err);
       channel.send(`⚠️ Error: ${err.message}`);
-      return;
+      return; // Bug 3: don't push to history on error
     }
+
     const response = stdout.trim();
     if (!response) { channel.send('⚠️ No response.'); return; }
 
-    history.push({ role: 'user', content: userMessage });
-    history.push({ role: 'assistant', content: response });
-    if (history.length >= MAX_EXCHANGES * 2) {
-      summary = `Previous: ${history.slice(0, 4).map(m => m.content).join(' | ')}`;
-      history = history.slice(-6);
-    }
+    // Bug 3: push only on success
+    history.push({ role: 'user', raw: userMessage });
+    history.push({ role: 'assistant', raw: response });
+
+    // Bug 1: pass channel so user gets notified on summarize
+    if (history.length >= MAX_EXCHANGES * 2) summarizeHistory(channel);
+
     sendChunked(channel, response);
   });
 };
@@ -87,7 +125,13 @@ client.on('messageCreate', async (message) => {
   console.log('Message from:', message.author.id, '→', content);
 
   if (content === '!new') { history = []; summary = ''; message.channel.send('🆕 New chat.'); return; }
-  if (content === '!status') { message.channel.send(`🟢 ${history.length / 2} exchanges`); return; }
+
+  // Bug 5 minor: use Math.floor to avoid fractional exchange count
+  if (content === '!status') {
+    message.channel.send(`🟢 ${Math.floor(history.length / 2)} exchanges | Summary: ${summary ? 'yes' : 'no'}`);
+    return;
+  }
+
   if (content.startsWith('!')) return;
 
   message.channel.send('⏳ Thinking...');
