@@ -87,7 +87,7 @@ const buildPrompt = (userMessage) => {
 };
 
 const askClaude = (userMessage, channel) => {
-  execFile('/usr/bin/claude', ['-p', buildPrompt(userMessage)], {
+  execFile('/usr/bin/claude', ['-p', buildPrompt(userMessage), '--allowedTools', 'Edit,Write,Read,Bash'], {
     cwd: WORKDIR,
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
