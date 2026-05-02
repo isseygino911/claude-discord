@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "check:secrets": "node scripts/check-secrets.js --all",
+    "check:staged": "node scripts/check-secrets.js",
+    "setup:hooks": "node -e \"require('fs').writeFileSync('.git/hooks/pre-commit','#!/bin/sh\\nnode \\\"$(git rev-parse --show-toplevel)/scripts/check-secrets.js\\\"\\n'); require('fs').chmodSync('.git/hooks/pre-commit','755'); console.log('Hook installed.');\""
   },
   "keywords": [],
   "author": "",

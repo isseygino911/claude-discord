@@ -1,2 +1,9 @@
 node_modules
 .env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+credentials.json
