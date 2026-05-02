@@ -1,6 +1,6 @@
-require('dotenv').config();
+require('dotenv').config({ path: '/home/claude-project/claude-discord/.env' });
 const { Client, GatewayIntentBits } = require('discord.js');
-const { spawn } = require('child_process');
+const { execFile } = require('child_process');
 
 const { DISCORD_TOKEN, ALLOWED_USER_ID } = process.env;
 
@@ -8,6 +8,12 @@ if (!DISCORD_TOKEN || !ALLOWED_USER_ID) {
   console.error('Missing DISCORD_TOKEN or ALLOWED_USER_ID');
   process.exit(1);
 }
+
+console.log('ENV CHECK:', {
+  discord: DISCORD_TOKEN ? 'SET' : 'MISSING',
+  user: ALLOWED_USER_ID ? 'SET' : 'MISSING',
+  claude: process.env.CLAUDE_CODE_OAUTH_TOKEN ? 'SET' : 'MISSING',
+});
 
 const client = new Client({
   intents: [
@@ -18,45 +24,72 @@ const client = new Client({
   ],
 });
 
-const WORKDIR = '/root';
+const WORKDIR = '/home/claude-project';
+const MAX_EXCHANGES = 10;
+const SYSTEM_PROMPT = `You are Claude, a coding assistant on a Ubuntu VPS. Be concise. When editing files, show only what changed.`;
+
+let history = [];
+let summary = '';
+
 const isAllowed = (userId) => userId === ALLOWED_USER_ID;
 
-const askClaude = (prompt, channel) => {
-  const proc = spawn('claude', ['-p', prompt], {
+const buildPrompt = (userMessage) => {
+  let prompt = SYSTEM_PROMPT + '\n\n';
+  if (summary) prompt += `Previous summary:\n${summary}\n\n`;
+  if (history.length) {
+    prompt += 'Recent messages:\n';
+    history.forEach(m => prompt += `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}\n`);
+  }
+  prompt += `Human: ${userMessage}\nAssistant:`;
+  return prompt;
+};
+
+const sendChunked = async (channel, text) => {
+  const clean = text.trim().replace(/```/g, '');
+  const max = 1900;
+  for (let i = 0; i < clean.length; i += max) {
+    await channel.send('```\n' + clean.slice(i, i + max) + '\n```');
+  }
+};
+
+const askClaude = (userMessage, channel) => {
+  const prompt = buildPrompt(userMessage);
+  console.log('OAUTH TOKEN:', process.env.CLAUDE_CODE_OAUTH_TOKEN ? 'SET' : 'MISSING');
+
+  execFile('/usr/bin/claude', ['-p', prompt, '--allowedTools', 'Edit,Write,Read,Bash'], {
     cwd: WORKDIR,
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  let output = '';
-
-  proc.stdout.on('data', (data) => { output += data.toString(); });
-  proc.stderr.on('data', (data) => {
-    const msg = data.toString().trim();
-    if (msg) channel.send('⚠️ ' + msg);
-  });
-
-  proc.on('close', () => {
-    if (output.trim()) {
-      const max = 1900;
-      const clean = output.trim().replace(/```/g, '');
-      for (let i = 0; i < clean.length; i += max) {
-        channel.send('```\n' + clean.slice(i, i + max) + '\n```');
-      }
+    maxBuffer: 1024 * 1024 * 10,
+  }, (err, stdout, stderr) => {
+    if (err) {
+      console.error('Claude error:', err);
+      channel.send(`⚠️ Error: ${err.message}`);
+      return;
     }
+    const response = stdout.trim();
+    if (!response) { channel.send('⚠️ No response.'); return; }
+
+    history.push({ role: 'user', content: userMessage });
+    history.push({ role: 'assistant', content: response });
+    if (history.length >= MAX_EXCHANGES * 2) {
+      summary = `Previous: ${history.slice(0, 4).map(m => m.content).join(' | ')}`;
+      history = history.slice(-6);
+    }
+    sendChunked(channel, response);
   });
 };
 
 client.on('messageCreate', async (message) => {
-console.log('Message received from:', message.author.id, 'content:', message.content);
-
   if (!isAllowed(message.author.id)) return;
   if (message.author.bot) return;
-
   const content = message.content.trim();
+  console.log('Message from:', message.author.id, '→', content);
+
+  if (content === '!new') { history = []; summary = ''; message.channel.send('🆕 New chat.'); return; }
+  if (content === '!status') { message.channel.send(`🟢 ${history.length / 2} exchanges`); return; }
   if (content.startsWith('!')) return;
 
-  console.log('Sending to Claude:', content);
   message.channel.send('⏳ Thinking...');
   askClaude(content, message.channel);
 });
