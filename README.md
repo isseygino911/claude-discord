@@ -73,6 +73,26 @@ Built-in commands:
 - `!new` — start a fresh conversation (clears history)
 - `!status` — show how many exchanges are in the current session
 
+## Security
+
+The repo includes a pre-commit hook that blocks accidental secret commits. Install it once after cloning:
+
+```bash
+npm run setup:hooks
+```
+
+To scan all files manually:
+
+```bash
+npm run check:secrets
+```
+
+Keep `.env` readable only by your user:
+
+```bash
+chmod 600 .env
+```
+
 ## Troubleshooting
 
 | Issue | Fix |
