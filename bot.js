@@ -113,6 +113,8 @@ client.on('messageCreate', async (message) => {
   if (content === '!new') { history = []; summary = ''; message.channel.send('🆕 New chat.'); return; }
   if (content === '!status') { message.channel.send(`🟢 ${Math.floor(history.length / 2)} exchanges | Summary: ${summary ? 'yes' : 'no'}`); return; }
   if (content.startsWith('!')) return;
+  if (content.startsWith('--')) { message.channel.send('⚠️ That looks like a CLI flag, not a message.'); return; }
+
 
   let userMessage = content;
   if (message.attachments.size > 0) {
