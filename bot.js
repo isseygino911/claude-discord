@@ -26,13 +26,7 @@ const client = new Client({
 });
 
 const WORKDIR = '/home/claude-project';
-const MAX_EXCHANGES = 10;
-const MAX_PROMPT_CHARS = 50000;
 const SYSTEM_PROMPT = `You are Claude, a coding assistant on a Ubuntu VPS. Be concise. When editing files, show only what changed.`;
-
-let history = [];
-let summary = '';
-
 const isAllowed = (userId) => userId === ALLOWED_USER_ID;
 
 const fetchText = (url) => new Promise((resolve, reject) => {
@@ -43,10 +37,8 @@ const fetchText = (url) => new Promise((resolve, reject) => {
   }).on('error', reject);
 });
 
-const toDiscord = (text) => text.replace(/`{3}/g, '').trim();
-
 const sendChunked = async (channel, text) => {
-  const clean = toDiscord(text);
+  const clean = text.replace(/`{3}/g, '').trim();
   if (!clean) return;
   const max = 1900;
   for (let i = 0; i < clean.length; i += max) {
@@ -54,40 +46,10 @@ const sendChunked = async (channel, text) => {
   }
 };
 
-const summarizeHistory = (channel) => {
-  const historyText = history.map(m =>
-    `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.raw}`
-  ).join('\n');
-
-  execFile('/usr/bin/claude', ['-p', `Summarize this conversation in 2-3 sentences:\n\n${historyText}`], {
-    cwd: WORKDIR,
-    env: { ...process.env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 1024 * 1024 * 10,
-  }, (err, stdout) => {
-    if (!err && stdout.trim()) summary = summary ? `${summary} ${stdout.trim()}` : stdout.trim();
-    history = [];
-    if (channel) channel.send('📝 History summarized, context preserved.');
-  });
-};
-
-const buildPrompt = (userMessage) => {
-  let prompt = SYSTEM_PROMPT + '\n\n';
-  if (summary) prompt += `Previous summary:\n${summary}\n\n`;
-  if (history.length) {
-    prompt += 'Recent messages:\n';
-    history.forEach(m => prompt += `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.raw}\n`);
-  }
-  prompt += `Human: ${userMessage}`;
-  if (prompt.length > MAX_PROMPT_CHARS) {
-    history = history.slice(-4);
-    return buildPrompt(userMessage);
-  }
-  return prompt;
-};
-
 const askClaude = (userMessage, channel) => {
- execFile('/usr/bin/claude', ['-p', buildPrompt(userMessage), '--allowedTools', 'Bash,Edit,Write,Read'], {
+  const prompt = `${SYSTEM_PROMPT}\n\nHuman: ${userMessage}`;
+
+  execFile('/usr/bin/claude', ['-p', prompt], {
     cwd: WORKDIR,
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -96,9 +58,6 @@ const askClaude = (userMessage, channel) => {
     if (err) { console.error('Claude error:', err); channel.send(`⚠️ Error: ${err.message}`); return; }
     const response = stdout.trim();
     if (!response) { channel.send('⚠️ No response.'); return; }
-    history.push({ role: 'user', raw: userMessage });
-    history.push({ role: 'assistant', raw: response });
-    if (history.length >= MAX_EXCHANGES * 2) summarizeHistory(channel);
     sendChunked(channel, response);
   });
 };
@@ -110,11 +69,7 @@ client.on('messageCreate', async (message) => {
   const content = message.content.trim();
   console.log('Message from:', message.author.id, '→', content);
 
-  if (content === '!new') { history = []; summary = ''; message.channel.send('🆕 New chat.'); return; }
-  if (content === '!status') { message.channel.send(`🟢 ${Math.floor(history.length / 2)} exchanges | Summary: ${summary ? 'yes' : 'no'}`); return; }
-  if (content.startsWith('!')) return;
-  if (content.startsWith('--')) { message.channel.send('⚠️ That looks like a CLI flag, not a message.'); return; }
-
+  if (content.startsWith('!') || content.startsWith('--')) return;
 
   let userMessage = content;
   if (message.attachments.size > 0) {
