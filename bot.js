@@ -49,10 +49,9 @@ const sendChunked = async (channel, text) => {
 const askClaude = (userMessage, channel) => {
   const prompt = `${SYSTEM_PROMPT}\n\nHuman: ${userMessage}`;
 
-  execFile('/usr/bin/claude', ['-p', prompt], {
+  execFile('/bin/bash', ['-c', `/usr/bin/claude -p ${JSON.stringify(prompt)} < /dev/null`], {
     cwd: WORKDIR,
     env: { ...process.env },
-    stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 1024 * 1024 * 10,
   }, (err, stdout) => {
     if (err) { console.error('Claude error:', err); channel.send(`⚠️ Error: ${err.message}`); return; }
